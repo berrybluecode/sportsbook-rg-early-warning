@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RG Analyst Console</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --mute:#5f6b7a; --line:#e3e7ec; --accent:#1f6feb;
+          --high:#c0392b; --med:#d68910; --low:#2e7d32; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:#0f2537; color:#fff; padding:12px 20px; display:flex; align-items:center; gap:16px; }
+  header h1 { font-size:17px; margin:0; font-weight:600; }
+  header .sub { color:#9fb3c8; font-size:12px; }
+  header .me { margin-left:auto; font-size:12px; color:#cfe0f0; text-align:right; }
+  .chip { display:inline-block; padding:1px 7px; border-radius:10px; background:#e8eef6; color:#22384e; font-size:11px; margin:1px; }
+  header .chip { background:#23415c; color:#d7e7f7; }
+  main { padding:16px 20px; display:grid; grid-template-columns: 1.15fr 1fr; gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--mute); margin:0 0 10px; }
+  .tiles { grid-column: 1 / -1; display:grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .tile .k { font-size:12px; color:var(--mute); } .tile .v { font-size:22px; font-weight:600; }
+  .tile .s { font-size:11px; color:var(--mute); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:var(--mute); font-weight:500; border-bottom:1px solid var(--line); padding:6px 4px; }
+  td { border-bottom:1px solid #f0f2f5; padding:6px 4px; vertical-align:top; }
+  tr.row:hover { background:#f3f7fd; cursor:pointer; } tr.sel { background:#e8f0fd; }
+  .tier { font-weight:600; font-size:11px; padding:1px 6px; border-radius:4px; color:#fff; }
+  .HIGH { background:var(--high); } .MEDIUM { background:var(--med); } .LOW { background:var(--low); }
+  .filters { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+  select, input, textarea, button { font:inherit; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:#fff; }
+  button { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
+  button.ghost { background:#fff; color:var(--accent); }
+  .muted { color:var(--mute); } .small { font-size:12px; }
+  .brief { background:#f7f9fc; border-left:3px solid var(--accent); padding:8px 10px; margin:8px 0; border-radius:4px; }
+  .overdue { color:var(--high); font-weight:600; }
+  .scroll { max-height:520px; overflow:auto; }
+  #genie { grid-column: 1 / -1; }
+  .msg { margin:8px 0; } .msg.q { font-weight:600; } .msg pre { background:#f4f6f8; padding:8px; overflow:auto; font-size:12px; }
+  .kv { display:grid; grid-template-columns: 120px 1fr; gap:2px 10px; font-size:13px; }
+  .note { font-size:11px; color:var(--mute); margin-top:6px; }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>RG Analyst Console</h1><div class="sub">Responsible Gambling early warning · synthetic data</div></div>
+  <div class="me" id="me">loading…</div>
+</header>
+<main>
+  <section class="tiles" id="tiles"></section>
+
+  <section class="card">
+    <h2>Case queue <span class="muted small">(Lakebase · rg_ops.risk_cases)</span></h2>
+    <div class="filters">
+      <select id="fStatus"><option value="OPEN">Open</option><option value="IN_REVIEW">In review</option>
+        <option value="ACTIONED">Actioned</option><option value="CLOSED_NO_ACTION">Closed - no action</option><option value="">All</option></select>
+      <select id="fMarket"><option value="">All my markets</option></select>
+      <select id="fTier"><option value="">All tiers</option><option>HIGH</option><option>MEDIUM</option></select>
+    </div>
+    <div class="scroll"><table><thead><tr><th>Player</th><th>Mkt</th><th>Tier</th><th>Score</th><th>Top marker</th><th>Suggested</th><th>SLA</th></tr></thead>
+      <tbody id="queue"></tbody></table></div>
+  </section>
+
+  <section class="card" id="detail"><h2>Case detail</h2><p class="muted">Select a case from the queue.</p></section>
+
+  <section class="card" id="genie">
+    <h2>Ask Genie <span class="muted small">(runs as you; Unity Catalog row filters and masks apply)</span></h2>
+    <div class="filters">
+      <input id="gq" style="flex:1" placeholder="e.g. How many HIGH risk players do we have per market today?">
+      <button id="gask">Ask</button><button class="ghost" id="gnew">New conversation</button>
+    </div>
+    <div id="gsamples" class="small"></div>
+    <div id="glog"></div>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api = async (p, o) => { const r = await fetch(p, o); if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.statusText); return r.json(); };
+let ME = null, SEL = null, CONV = null;
+
+function slaCell(t) {
+  const h = (new Date(t) - Date.now()) / 36e5;
+  return h < 0 ? `<span class="overdue">overdue ${Math.round(-h)}h</span>` : h < 24 ? `<span class="overdue">${Math.round(h)}h</span>` : `${Math.round(h/24)}d`;
+}
+
+async function loadMe() {
+  ME = await api('/api/me');
+  $('#me').innerHTML = `${esc(ME.email)}<br>licensed markets: ${ME.markets.map(m => `<span class="chip">${m}</span>`).join('') || '<b>none</b>'}`;
+  $('#fMarket').innerHTML = '<option value="">All my markets</option>' + ME.markets.map(m => `<option>${m}</option>`).join('');
+}
+
+async function loadSummary() {
+  const s = await api('/api/summary');
+  const t = s.by_market.reduce((a, r) => ({open: a.open + r.open_cases, high: a.high + r.open_high, due: a.due + r.due_24h, res: a.res + r.resolved}), {open:0, high:0, due:0, res:0});
+  $('#tiles').innerHTML = [
+    ['Open cases', t.open, 'HIGH + MEDIUM tier'], ['Open HIGH risk', t.high, 'top 3% of active base'],
+    ['Due within 24h', t.due, 'regulatory SLA'], ['Resolved', t.res, 'actioned or closed'],
+    ...s.by_market.map(r => [`Open · ${r.market}`, r.open_cases, `${r.open_high} high · ${r.due_24h} due 24h`])
+  ].map(([k, v, x]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${x}</div></div>`).join('');
+}
+
+async function loadQueue() {
+  const q = new URLSearchParams({status: $('#fStatus').value, market: $('#fMarket').value, tier: $('#fTier').value});
+  const rows = await api('/api/cases?' + q);
+  $('#queue').innerHTML = rows.map(r => `<tr class="row ${r.player_id === SEL ? 'sel' : ''}" data-id="${r.player_id}">
+    <td>${r.player_id}</td><td>${r.market}</td><td><span class="tier ${r.risk_tier}">${r.risk_tier}</span></td>
+    <td>${r.risk_score.toFixed(2)}</td><td class="small">${esc((r.reason_codes || [])[0] || '')}</td>
+    <td class="small">${esc((r.recommended_action || '').replaceAll('_', ' ').toLowerCase())}</td><td>${slaCell(r.sla_due_at)}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="muted">No cases.</td></tr>';
+  document.querySelectorAll('tr.row').forEach(tr => tr.onclick = () => openCase(tr.dataset.id));
+}
+
+function trendSvg(rows) {
+  if (!rows.length) return '<p class="muted small">No activity in the last 8 weeks.</p>';
+  const W = 520, H = 110, bw = W / 56, max = Math.max(...rows.map(r => +r.stake_eur), 1);
+  const end = new Date(rows[rows.length - 1].activity_date);
+  const bars = rows.map(r => { const i = 55 - Math.round((end - new Date(r.activity_date)) / 864e5);
+    const h = (+r.stake_eur / max) * (H - 18), night = +r.night_bets > 0;
+    return `<rect x="${i * bw}" y="${H - 14 - h}" width="${bw - 1.5}" height="${h}" fill="${night ? '#c0392b' : '#1f6feb'}"><title>${r.activity_date}: stake EUR ${(+r.stake_eur).toFixed(0)}, net loss ${(+r.net_loss_eur).toFixed(0)}, ${r.night_bets} night bets, ${r.deposits} deposits, ${r.reversed_withdrawals} reversed withdrawals</title></rect>`; }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Daily stake, last 8 weeks">${bars}
+    <text x="0" y="${H - 2}" font-size="10" fill="#5f6b7a">8 weeks ago</text><text x="${W}" y="${H - 2}" font-size="10" fill="#5f6b7a" text-anchor="end">latest day</text>
+    <text x="0" y="10" font-size="10" fill="#5f6b7a">max EUR ${max.toFixed(0)}/day</text></svg>
+    <div class="note">Daily stake (EUR). <span style="color:#c0392b">Red</span> = days with bets between 00:00 and 05:00.</div>`;
+}
+
+async function openCase(id) {
+  SEL = id; loadQueue();
+  $('#detail').innerHTML = '<h2>Case detail</h2><p class="muted">Loading…</p>';
+  const d = await api('/api/cases/' + id), c = d.case, p = d.profile || {};
+  $('#detail').innerHTML = `<h2>Case ${c.player_id} · ${c.market} <span class="tier ${c.risk_tier}">${c.risk_tier}</span></h2>
+    <div class="kv"><div class="muted">Risk score</div><div><b>${c.risk_score.toFixed(3)}</b> <span class="muted small">P(harm outcome in next 28 days), model v${c.model_version}</span></div>
+      <div class="muted">Status</div><div>${c.status}${c.assigned_to ? ' · ' + esc(c.assigned_to) : ''} · SLA ${slaCell(c.sla_due_at)}</div>
+      <div class="muted">Player</div><div>${esc(p.first_name)} ${esc(p.last_name)} · ${esc(p.email)} · DOB ${esc(p.date_of_birth)} · age ${esc(p.age)} · KYC ${esc(p.kyc_status)}</div></div>
+    <div class="note">Identity fields are masked by Unity Catalog unless you have Compliance PII access.</div>
+    <h2 style="margin-top:12px">Risk markers</h2>${(c.reason_codes || []).map(r => `<span class="chip">${esc(r)}</span>`).join(' ') || '<span class="muted">none above threshold</span>'}
+    ${c.summary ? `<div class="brief"><b>AI case brief</b> <span class="muted small">(advisory)</span><br>${esc(c.summary)}<br>
+      <span class="small"><b>Suggested:</b> ${esc(c.recommended_action)} · ${esc(c.urgency)}</span></div>` : ''}
+    <h2 style="margin-top:12px">Behaviour, last 8 weeks <span class="muted small">(Unity Catalog · gold_player_daily)</span></h2>${trendSvg(d.trend)}
+    <h2 style="margin-top:12px">Record intervention</h2>
+    <div class="filters"><select id="aAct">${ME.actions.map(a => `<option ${a === c.recommended_action ? 'selected' : ''}>${a}</option>`).join('')}</select>
+      <select id="aStatus"><option>ACTIONED</option><option>IN_REVIEW</option><option>CLOSED_NO_ACTION</option></select></div>
+    <textarea id="aNote" rows="2" style="width:100%" placeholder="Analyst note (no PII)"></textarea>
+    <div style="margin-top:6px"><button id="aGo">Save to Lakebase</button></div>
+    <h2 style="margin-top:12px">History</h2>
+    ${d.history.map(h => `<div class="small">${new Date(h.created_at).toLocaleString()} · <b>${h.action}</b> → ${h.new_status} · ${esc(h.analyst)}<br><span class="muted">${esc(h.note)}</span></div>`).join('') || '<span class="muted small">No interventions yet.</span>'}`;
+  $('#aGo').onclick = async () => {
+    await api(`/api/cases/${id}/actions`, {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: $('#aAct').value, new_status: $('#aStatus').value, note: $('#aNote').value})});
+    await Promise.all([openCase(id), loadSummary()]);
+  };
+}
+
+async function ask(qText) {
+  const q = qText || $('#gq').value.trim(); if (!q) return;
+  $('#gq').value = '';
+  const box = document.createElement('div');
+  box.innerHTML = `<div class="msg q">Q: ${esc(q)}</div><div class="msg muted">Genie is thinking…</div>`;
+  $('#glog').prepend(box);
+  try {
+    const s = await api('/api/genie/ask', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({question: q, conversation_id: CONV})});
+    CONV = s.conversation_id;
+    let r;
+    for (let i = 0; i < 90; i++) { await new Promise(res => setTimeout(res, 2000));
+      r = await api(`/api/genie/${s.conversation_id}/${s.message_id}`);
+      if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(r.status)) break; }
+    const table = r.columns.length ? `<table><thead><tr>${r.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+      <tbody>${r.rows.map(row => `<tr>${row.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '';
+    box.children[1].outerHTML = `<div class="msg">${esc(r.text || r.error?.error || r.status)}${table}
+      ${r.sql ? `<details><summary class="small muted">SQL</summary><pre>${esc(r.sql)}</pre></details>` : ''}</div>`;
+  } catch (e) { box.children[1].textContent = 'Error: ' + e.message; }
+}
+
+$('#gask').onclick = () => ask();
+$('#gq').onkeydown = e => { if (e.key === 'Enter') ask(); };
+$('#gnew').onclick = () => { CONV = null; $('#glog').innerHTML = ''; };
+['How many HIGH risk players do we have per market today?', 'Show GGR and harm outcomes by market for October 2026',
+ 'What interventions does the AI recommend most often for HIGH risk players?']
+  .forEach(s => { const b = document.createElement('button'); b.className = 'ghost'; b.style.margin = '2px'; b.textContent = s; b.onclick = () => ask(s); $('#gsamples').append(b); });
+['#fStatus', '#fMarket', '#fTier'].forEach(s => $(s).onchange = loadQueue);
+
+(async () => { try { await loadMe(); await Promise.all([loadSummary(), loadQueue()]); }
+  catch (e) { $('#me').textContent = 'Error: ' + e.message; } })();
+</script>
+</body>
+</html>

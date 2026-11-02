@@ -1,0 +1,10 @@
+{
+  "profile": "<databricks-cli-profile>",
+  "catalog": "<catalog>",
+  "warehouse_id": "<warehouse_id>",
+  "lakebase_project": "rg-early-warning",
+  "app_name": "rg-analyst-console",
+  "genie_space_id": "<filled by tools/create_genie_space.py>",
+  "app_sp_client_id": "<app service principal client id>",
+  "redact": {"<real value to hide in committed evidence>": "<placeholder>"}
+}

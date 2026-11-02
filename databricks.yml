@@ -1,0 +1,128 @@
+bundle:
+  name: sportsbook-rg-early-warning
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for the sportsbook_rg schema (set BUNDLE_VAR_catalog)
+  schema:
+    default: sportsbook_rg
+  warehouse_id:
+    description: SQL warehouse id for SQL tasks, Genie and the app (set BUNDLE_VAR_warehouse_id)
+  lakebase_project:
+    default: rg-early-warning
+  llm_endpoint:
+    default: databricks-claude-sonnet-5-5
+  genie_space_id:
+    description: Genie space id from tools/create_genie_space.py (set BUNDLE_VAR_genie_space_id)
+  app_sp_role:
+    description: Client id of the app service principal, after the first app deploy (set BUNDLE_VAR_app_sp_role)
+    default: ""
+
+resources:
+  pipelines:
+    rg_lakeflow_pipeline:
+      name: sportsbook-rg-lakeflow-pipeline
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      serverless: true
+      photon: true
+      channel: CURRENT
+      libraries:
+        - file:
+            path: ./src/pipeline/rg_lakeflow_pipeline.sql
+      configuration:
+        landing_root: /Volumes/${var.catalog}/${var.schema}/raw_landing
+        catalog: ${var.catalog}
+        schema: ${var.schema}
+
+  jobs:
+    rg_end_to_end:
+      name: sportsbook-rg-early-warning-daily
+      description: Raw landing -> UC governance -> Lakeflow -> ML scoring -> GenAI briefs -> Lakebase case queue
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema
+          default: ${var.schema}
+      tasks:
+        - task_key: generate_raw_data
+          notebook_task:
+            notebook_path: ./src/01_generate_raw_data.py
+        - task_key: governance_setup
+          depends_on: [{task_key: generate_raw_data}]
+          notebook_task:
+            notebook_path: ./src/00_governance_setup.sql
+            warehouse_id: ${var.warehouse_id}
+        - task_key: lakeflow_ingest
+          depends_on: [{task_key: governance_setup}]
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.rg_lakeflow_pipeline.id}
+            full_refresh: true
+        - task_key: governance_hardening
+          depends_on: [{task_key: lakeflow_ingest}]
+          notebook_task:
+            notebook_path: ./src/02_governance_hardening.sql
+            warehouse_id: ${var.warehouse_id}
+        - task_key: train_score_model
+          depends_on: [{task_key: governance_hardening}]
+          notebook_task:
+            notebook_path: ./src/03_train_score_risk_model.py
+        - task_key: genai_case_briefs
+          depends_on: [{task_key: train_score_model}]
+          notebook_task:
+            notebook_path: ./src/04_genai_case_briefs.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              llm_endpoint: ${var.llm_endpoint}
+        - task_key: lakebase_serving
+          depends_on: [{task_key: genai_case_briefs}]
+          notebook_task:
+            notebook_path: ./src/05_lakebase_serving.py
+            base_parameters:
+              lakebase_endpoint: projects/${var.lakebase_project}/branches/production/endpoints/primary
+              app_sp_role: ${var.app_sp_role}
+
+  apps:
+    rg_analyst_console:
+      name: rg-analyst-console
+      description: RG Analyst Console - case queue (Lakebase), player behaviour (UC), Genie Q&A
+      source_code_path: ./app
+      config:
+        command: ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
+        env:
+          - name: CATALOG
+            value: ${var.catalog}
+          - name: SCHEMA
+            value: ${var.schema}
+          - name: WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: GENIE_SPACE_ID
+            value_from: genie-space
+          - name: LAKEBASE_ENDPOINT
+            value: projects/${var.lakebase_project}/branches/production/endpoints/primary
+          - name: LAKEBASE_DB
+            value: databricks_postgres
+      user_api_scopes:
+        - sql
+        - dashboards.genie
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+        - name: genie-space
+          genie_space:
+            name: Sportsbook RG Early Warning
+            space_id: ${var.genie_space_id}
+            permission: CAN_RUN
+        - name: lakebase
+          postgres:
+            branch: projects/${var.lakebase_project}/branches/production
+            database: projects/${var.lakebase_project}/branches/production/databases/databricks-postgres
+            permission: CAN_CONNECT_AND_CREATE
+
+targets:
+  dev:
+    mode: development
+    default: true
+    # workspace comes from DATABRICKS_CONFIG_PROFILE (see local.env)

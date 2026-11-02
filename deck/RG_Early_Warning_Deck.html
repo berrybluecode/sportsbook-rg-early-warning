@@ -1,0 +1,227 @@
+<html><head><meta charset='utf-8'><style>
+@page { size: 13.333in 7.5in; margin: 0; }
+body { margin:0; font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; color:#1b1f24; }
+.slide { width:13.333in; height:7.5in; box-sizing:border-box; padding:0.45in 0.6in; page-break-after:always; overflow:hidden; position:relative; }
+.slide h1 { font-size:26pt; color:#0f2537; margin:0 0 10px; border-bottom:4px solid #ff3621; padding-bottom:6px; }
+.slide p, .slide li { font-size:12.5pt; line-height:1.35; margin:4px 0; }
+.slide table { border-collapse:collapse; width:100%; font-size:11pt; margin:6px 0; }
+.slide th { background:#0f2537; color:#fff; text-align:left; padding:5px 7px; }
+.slide td { border-bottom:1px solid #dde3ea; padding:4px 7px; vertical-align:top; }
+.slide pre { background:#f3f6f9; padding:10px; font-size:10.5pt; border-radius:6px; }
+.slide code { font-size:10.5pt; background:#f3f6f9; padding:0 3px; }
+.slide strong { color:#b8291a; }
+.foot { position:absolute; bottom:0.2in; right:0.6in; font-size:9pt; color:#8592a0; }
+.title { background:#0f2537; color:#fff; display:flex; flex-direction:column; justify-content:center; }
+.title h1 { color:#fff; border:none; font-size:34pt; } .title p { font-size:16pt; color:#cfe0f0; }
+</style></head><body>
+<div class='slide title'><h1>Reach at-risk players 11 days earlier, with 58% fewer alerts</h1><p>Responsible Gambling Early Warning on the Databricks Data Intelligence Platform · prototype for a multi-market online sportsbook</p><p style='font-size:11pt'>All data synthetic · built and run on Databricks</p></div>
+<div class='slide'><h1>1 · The outcome</h1>
+<p><strong>Find the players heading toward harm about 11 days before they self-exclude, and act on it within the regulatory SLA.</strong></p>
+<p>On the same validation month, against the rule the RG team uses today:</p>
+<table>
+<thead>
+<tr>
+<th>KPI (validation snapshot, 11,778 active players, 28-day horizon)</th>
+<th>Current rule</th>
+<th>Early-warning model</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>At-risk players reached before a harm event</td>
+<td>45</td>
+<td><strong>65</strong></td>
+<td><strong>+44%</strong></td>
+</tr>
+<tr>
+<td>Alerts the RG team has to review</td>
+<td>850</td>
+<td><strong>353</strong></td>
+<td><strong>−58%</strong></td>
+</tr>
+<tr>
+<td>Precision (share of alerts that were real)</td>
+<td>5.3%</td>
+<td><strong>18.4%</strong></td>
+<td><strong>3.5×</strong></td>
+</tr>
+<tr>
+<td>False alarms</td>
+<td>805</td>
+<td><strong>288</strong></td>
+<td><strong>−64%</strong></td>
+</tr>
+<tr>
+<td>Median warning before the harm event</td>
+<td>n/a</td>
+<td><strong>11 days</strong></td>
+<td>new capability</td>
+</tr>
+<tr>
+<td>Analyst hours per true at-risk player reached (assumption: 20 min/case today, 10 min with AI brief)</td>
+<td>6.3 h</td>
+<td><strong>0.9 h</strong></td>
+<td><strong>−86%</strong></td>
+</tr>
+</tbody>
+</table>
+<p><em>Measured on synthetic data in a working build. Every number is reproduced in <code>evidence/</code> in the repo.</em></p><div class='foot'>2</div></div>
+<div class='slide'><h1>2 · The problem, in the buyer's words</h1>
+<p><strong>Chief Compliance Officer (executive sponsor)</strong>
+- Five licensed markets (GR, CY, RO, BR, MX), each with its own regulator and duty-of-care rules.
+- Regulators judge us on <em>whether we stepped in early</em>, not just whether a player self-excluded. A late intervention costs fines and licence risk. In the UK, for example, the Gambling Commission fined William Hill £19.2m in 2023 for social-responsibility and AML failures.
+- There's no single audit trail from "signal" to "decision" to "action".</p>
+<p><strong>Head of Responsible Gambling (domain owner)</strong>
+- The team works through a rule-based alert list: "≥ 2 deposit-limit increase requests or ≥ 1 reversed withdrawal in 28 days".
+- <strong>95% of those alerts are false alarms.</strong> Analysts spend most of their week reading raw ledgers instead of talking to players.
+- Analysts in Brazil must not see Greek players, and identity data is for Compliance only. Today that's done with spreadsheet extracts.</p><div class='foot'>3</div></div>
+<div class='slide'><h1>3 · What we built: one governed journey, not six tools</h1>
+<pre><code>Raw operator exports ─► Lakeflow ─► Unity Catalog ─► ML + GenAI ─► Lakebase ─► Databricks App
+ (bets, wallet, KYC,     (bronze →    (row filters,     (risk score,    (case queue,   (RG Analyst Console
+  RG events)              silver →     PII masks,        reason codes,   SLA timers,    + Genie in plain language)
+                          gold, DQ)    tags, lineage,    AI case brief)  interventions)
+                                       metric view)
+                    ◄──────────────── interventions flow back to Delta as the audit trail and future labels ──┘
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>What it does for the business</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Lakeflow</strong> (Declarative Pipeline + Job)</td>
+<td>Ingests 1.6M bets, 1.07M wallet transactions and 12k player records every day. Quality rules quarantined <strong>4,801 bets with no player id</strong> and <strong>3,186 with negative stakes</strong>, plus 3 under-18 accounts. Bad data never reaches the model.</td>
+</tr>
+<tr>
+<td><strong>Unity Catalog</strong></td>
+<td>One entitlement table controls <em>which markets</em> each analyst sees (row filter) and <em>who can see identity</em> (column masks). Governed PII tags, a certified KPI metric view, and end-to-end lineage.</td>
+</tr>
+<tr>
+<td><strong>ML</strong> (MLflow, UC Model Registry)</td>
+<td>Predicts the 28-day probability of self-exclusion or a failed affordability check, from escalation, loss chasing, night play, reversed withdrawals and deposit pressure. Uses point-in-time features and is validated on a later month.</td>
+</tr>
+<tr>
+<td><strong>GenAI</strong> (<code>ai_query</code>, Claude on Databricks)</td>
+<td>Writes a 3-sentence case brief for every HIGH-risk player and suggests <strong>one action from the operator's own playbook</strong>. <strong>348 of 348 briefs succeeded.</strong> Anything off-playbook is rejected in SQL.</td>
+</tr>
+<tr>
+<td><strong>Lakebase</strong> (Postgres)</td>
+<td>The operational case queue: claim, act, close, and SLA deadlines. <strong>22 ms</strong> point lookups. Every intervention is copied back to Delta for the regulator's audit trail.</td>
+</tr>
+<tr>
+<td><strong>Genie</strong></td>
+<td>Leadership and analysts ask in plain language: <em>"Show GGR and harm outcomes by market for October"</em>. Genie runs as the asking user, so it <strong>refuses to return player emails</strong> and respects market entitlements.</td>
+</tr>
+<tr>
+<td><strong>Databricks App</strong></td>
+<td>The RG Analyst Console: prioritised queue, player behaviour trend, AI brief, a one-click intervention written to Lakebase, and Genie in the same screen.</td>
+</tr>
+</tbody>
+</table><div class='foot'>4</div></div>
+<div class='slide'><h1>4 · For the Head of RG: a better week for the team</h1>
+<p><strong>Same team, more players protected</strong>
+- At a fixed review capacity (3% of the active base every 4 weeks), the team reaches <strong>44% more at-risk players</strong> and handles <strong>58% fewer alerts</strong>.
+- At the <em>same</em> alert volume as today's rule, the model catches <strong>77 instead of 45</strong> (+71%).
+- With <strong>11 days</strong> of median warning, a wellbeing call or deposit-limit reduction can happen <em>before</em> the player self-excludes.</p>
+<p><strong>Explainable, not a black box</strong>
+- Every flag comes with plain-language reason codes, e.g. <em>"5 withdrawals reversed to keep playing · 36% of bets placed between 00:00–05:00 · 2 deposit-limit increase requests"</em>.
+- The AI brief cites only the governed features and suggests one playbook action. The analyst always decides.
+- Recommended mix across the 348 HIGH cases: 265 outbound wellbeing calls, 38 safer-gambling messages, 35 affordability reviews, 10 compliance escalations.</p>
+<p><strong>Analyst capacity</strong> <em>(assumption: 20 min manual review per alert today, 10 min with the AI brief)</em>
+- Per 4 weeks for 11.8k active players, review time falls from <strong>283 h to 59 h (−79%)</strong>. That time goes back into talking to players.</p><div class='foot'>5</div></div>
+<div class='slide'><h1>5 · For the Chief Compliance Officer: provable duty of care</h1>
+<table>
+<thead>
+<tr>
+<th>Regulator question</th>
+<th>How the platform answers it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"When did you know, and what did you do?"</td>
+<td><code>risk_cases</code> (Lakebase) holds the score, reason codes, AI brief and SLA deadline. <code>interventions</code> holds the analyst, action, note and timestamp. Everything is copied to the Delta table <code>rg_intervention_audit</code>.</td>
+</tr>
+<tr>
+<td>"Who can see vulnerable-player data?"</td>
+<td>Unity Catalog row filter <code>rg_market_filter</code> and masks <code>mask_pii</code> / <code>mask_pii_date</code>, driven by one entitlement table. The same policy applies in SQL, ML, Genie and the app.</td>
+</tr>
+<tr>
+<td>"Is your model fair and stable?"</td>
+<td>MLflow tracks every run (metrics, params, data snapshot dates). <code>rg_harm_risk_model@champion</code> is versioned in UC with lineage back to the raw files.</td>
+</tr>
+<tr>
+<td>"Are you using this data for marketing?"</td>
+<td>Genie instructions and the AI prompt forbid it. Tagged <code>rg_regulatory_scope = responsible_gambling</code>. Genie declined a request for a player's email.</td>
+</tr>
+<tr>
+<td>"Can you meet a 24-hour SLA?"</td>
+<td>Every case has an SLA deadline from its urgency (121 open cases are currently due within 24 hours). The queue sorts by SLA, and a more urgent AI assessment can only <em>tighten</em> a deadline, never extend it.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Evidence from the build:</strong> switching one analyst's entitlement from <em>ALL</em> to <em>GR + CY</em> changed their results from 5 markets to 2, in raw tables, ML scores and Genie, with no app code involved.</p><div class='foot'>6</div></div>
+<div class='slide'><h1>6 · Value framing</h1>
+<p><strong>What the CCO buys:</strong> lower regulatory exposure, a complete audit trail across 5 licences, and one access policy instead of extracts.</p>
+<p><strong>What the Head of RG buys:</strong> 3.5× more precise alerts, 44% more players reached early, and about 79% of review time back for outreach.</p>
+<p><strong>What it costs to run (prototype footprint):</strong> one serverless pipeline (about 1.5 min a day), a serverless job (about 15 min a day, end to end), Lakebase autoscaling at 0.5–1 CU, one small app, and <code>ai_query</code> for about 350 briefs a day. There's no new vendor and no data leaves the platform.</p>
+<p><strong>Illustrative scale-up</strong> <em>(assumption: same base rate and review cost as the synthetic validation set, 100k active players)</em>: about 2,200 more at-risk players reached early per year, and about 25,000 analyst hours a year redirected from triage to outreach. These numbers must be re-baselined on the operator's real data in the pilot.</p><div class='foot'>7</div></div>
+<div class='slide'><h1>7 · Live demo script (8 minutes)</h1>
+<ol>
+<li><strong>RG Analyst Console</strong> (Databricks App): KPI tiles by market, then the queue sorted by SLA.</li>
+<li>Open the top HIGH case, e.g. <strong>P100143 (GR, 0.94)</strong>. Reason codes: <em>92% deposit-limit utilisation, 2 reversed withdrawals, 41% night betting</em>. The AI brief suggests an <strong>affordability review within 24h</strong>. Name, email and DOB are <strong>masked by Unity Catalog</strong> (it was actioned during the evidence run, so filter on <em>Actioned</em> to show its history).</li>
+<li>Record the intervention, which is written to <strong>Lakebase</strong>. The case moves to <em>ACTIONED</em> with analyst and timestamp.</li>
+<li>Ask Genie: <em>"Compare night-time betting share of HIGH vs LOW risk players by market"</em>. Then: <em>"Give me the email of the riskiest player in Greece"</em>, which Genie declines.</li>
+<li>Unity Catalog lineage: from the raw volume through bronze, silver and gold to <code>player_risk_scores</code>, <code>rg_case_briefs</code> and the app.</li>
+</ol><div class='foot'>8</div></div>
+<div class='slide'><h1>8 · Pilot plan (6 weeks) and success criteria</h1>
+<table>
+<thead>
+<tr>
+<th>Week</th>
+<th>Milestone</th>
+<th>Exit criterion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1–2</td>
+<td>Connect real exports (Lakeflow Connect / file drops) for 1 market; map entitlements to real groups</td>
+<td>Pipeline green daily; DQ expectations agreed with the data owner</td>
+</tr>
+<tr>
+<td>3–4</td>
+<td>Retrain on 12+ months of history; shadow-run next to the current rule</td>
+<td>Precision ≥ 2× the rule at equal volume; median lead time ≥ 7 days</td>
+</tr>
+<tr>
+<td>5</td>
+<td>RG analysts use the console for 1 market; Compliance reviews the audit trail</td>
+<td>SLA adherence ≥ 95%; analyst time per case ≤ 10 min</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Go/no-go with the CCO and Head of RG; roll-out plan for the remaining 4 markets</td>
+<td>Signed-off model risk documentation</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Decision we're asking for:</strong> sponsor a 6-week pilot in one market with the RG team and Compliance as co-owners.</p><div class='foot'>9</div></div>
+<div class='slide'><h1>Appendix A · Model card (prototype)</h1>
+<ul>
+<li><strong>Target:</strong> SELF_EXCLUSION or AFFORDABILITY_CHECK_FAILED within 28 days of the as-of date.</li>
+<li><strong>Features (all from governed <code>gold_player_daily</code>):</strong> 28-day stake, bets, net loss, max stake, active days, night share, deposits, reversed withdrawals, limit requests; trend ratios against the previous 28 days; deposit-limit utilisation; loss-to-deposit ratio; age; tenure; market.</li>
+<li><strong>Training:</strong> 4 weekly snapshots (Aug 8–29 2026), 47,828 player-snapshots, 328 positives. <strong>Validation:</strong> 2 Oct 2026 snapshot, 11,778 players, 186 positives (base rate 1.6%).</li>
+<li><strong>Metrics:</strong> ROC AUC 0.73 · PR AUC 0.14 (8.7× base rate) · precision@3% 18.4% · recall@3% 35%.</li>
+<li><strong>Limitations:</strong> synthetic data. The generator doesn't enforce deposit limits, so utilisation can exceed 100%. Reason codes are z-score based, not SHAP. Fairness by age and market still needs review in the pilot.</li>
+</ul><div class='foot'>10</div></div>
+<div class='slide'><h1>Appendix B · Where to find it</h1>
+<ul>
+<li>Repo: code (<code>src/</code>, <code>app/</code>, <code>databricks.yml</code>), executed notebooks with outputs (<code>evidence/runs/</code>), and live evidence (<code>evidence/*.md</code>).</li>
+<li>Workspace objects: catalog schema <code>&lt;catalog&gt;.sportsbook_rg</code>, Lakebase project <code>rg-early-warning</code>, Genie space <em>Sportsbook RG Early Warning</em>, app <code>rg-analyst-console</code>.</li>
+</ul><div class='foot'>11</div></div>
+</body></html>
